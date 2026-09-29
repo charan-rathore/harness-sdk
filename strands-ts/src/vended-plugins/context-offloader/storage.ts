@@ -346,8 +346,9 @@ export class FileStorage implements Storage {
     const path = await import('node:path')
 
     const resolvedDir = path.resolve(this._artifactDir)
-    const candidatePath = path.resolve(this._artifactDir, reference)
-    if (reference.includes('..') || path.dirname(candidatePath) !== resolvedDir) {
+    const candidatePath =
+      reference === path.basename(reference) ? path.join(resolvedDir, reference) : path.resolve(reference)
+    if (reference.split(/[/\\]/).includes('..') || path.dirname(candidatePath) !== resolvedDir) {
       throw new Error(`Reference not found: ${reference}`)
     }
     const filename = this._knownFilename(path.basename(candidatePath))
