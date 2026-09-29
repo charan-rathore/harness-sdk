@@ -55,6 +55,36 @@ describe('FileStorage', () => {
     }
   })
 
+  it('retrieves legacy paths when the artifact directory is relative', async () => {
+    const cwdTmpDir = await fs.mkdtemp(path.join(process.cwd(), 'context-offloader-relative-'))
+    try {
+      const relativeDir = path.relative(process.cwd(), path.join(cwdTmpDir, 'artifacts'))
+      const storage = new FileStorage(`./${relativeDir}`)
+      const ref = await storage.store('legacy', new TextEncoder().encode('saved'), 'text/plain')
+
+      for (const reference of [`./${relativeDir}/${ref}`, `${relativeDir}/${ref}`]) {
+        const result = await storage.retrieve(reference)
+        expect(new TextDecoder().decode(result.content)).toBe('saved')
+      }
+      await expect(storage.retrieve(`${relativeDir}/../${path.basename(relativeDir)}/${ref}`)).rejects.toThrow(
+        'Reference not found'
+      )
+    } finally {
+      await fs.rm(cwdTmpDir, { recursive: true, force: true })
+    }
+  })
+
+  it('retrieves a stored key ending in a dot without allowing traversal', async () => {
+    const storage = new FileStorage(tmpDir)
+    const ref = await storage.store('Summary of results.', new TextEncoder().encode('saved'), 'text/plain')
+    expect(ref).toContain('..txt')
+    const result = await storage.retrieve(ref)
+    expect(new TextDecoder().decode(result.content)).toBe('saved')
+    await expect(storage.retrieve(`${tmpDir}/../${path.basename(tmpDir)}/${ref}`)).rejects.toThrow(
+      'Reference not found'
+    )
+  })
+
   it('retrieves full paths without metadata and refuses unknown stems', async () => {
     const storage = new FileStorage(tmpDir)
     const ref = await storage.store('legacy', new TextEncoder().encode('saved'), 'text/plain')
