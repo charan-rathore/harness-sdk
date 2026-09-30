@@ -715,7 +715,18 @@ class GeminiModel(Model):
         }
         request = self._format_request(prompt, None, system_prompt, params)
         client = self._get_client().aio
-        response = await client.models.generate_content(**request)
+        try:
+            response = await client.models.generate_content(**request)
+        except genai.errors.ClientError as error:
+            match error.status:
+                case "RESOURCE_EXHAUSTED" | "UNAVAILABLE":
+                    raise ModelThrottledException(error.message or str(error)) from error
+                case "INVALID_ARGUMENT":
+                    if error.message and "exceeds the maximum number of tokens" in error.message:
+                        raise ContextWindowOverflowException(error.message) from error
+                    raise
+                case _:
+                    raise
         yield {"output": output_model.model_validate(response.parsed)}
 
     @staticmethod
