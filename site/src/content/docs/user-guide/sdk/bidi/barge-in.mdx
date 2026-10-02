@@ -5,6 +5,7 @@ tags: [bidi-streaming]
 redirectFrom:
   - docs/user-guide/concepts/bidirectional-streaming/interruption
   - docs/user-guide/sdk/bidirectional-streaming/interruption
+  - docs/user-guide/sdk/bidirectional-streaming/barge-in
 sourceLinks:
   - path: strands-py/src/strands/bidi/types/events.py
   - path: strands-py/src/strands/bidi/io/audio.py
@@ -80,7 +81,7 @@ async def main():
     
     async for event in agent.receive():
         if isinstance(event, BidiBargeInEvent):
-            print(f"Barge-in: {event.reason}")
+            print("Barge-in detected")
             # Custom handling:
             # - Update UI to show barge-in
             # - Log analytics
@@ -95,8 +96,7 @@ asyncio.run(main())
 
 ### Key Events
 
-**BidiBargeInEvent** - Emitted when barge-in detected:
-- `reason`: `"user_speech"` (most common) or `"error"`
+**BidiBargeInEvent** - Emitted when a barge-in is detected. It carries no fields beyond `type`.
 
 ## Barge-in Hooks
 
@@ -114,7 +114,7 @@ class BargeInTracker:
     
     async def on_barge_in(self, event: BidiBargeInHookEvent):
         self.barge_in_count += 1
-        print(f"Barge-in #{self.barge_in_count}: {event.reason}")
+        print(f"Barge-in #{self.barge_in_count}")
         
         # Log to analytics
         # Update UI

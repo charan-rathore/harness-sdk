@@ -42,7 +42,6 @@ from ...tools._caller import _ToolCaller
 from ...tools.executors import ConcurrentToolExecutor
 from ...tools.registry import ToolRegistry
 from ...tools.tool_provider import ToolProvider
-from ...tools.watcher import ToolWatcher
 from ...types._snapshot import (
     BIDI_SNAPSHOT_FIELDS,
     BIDI_SNAPSHOT_PRESETS,
@@ -75,6 +74,7 @@ from .loop import _AgentLoop
 
 if TYPE_CHECKING:
     from ..._context_manager.context_manager import ContextManager
+    from ...session.session_manager import SessionManager
     from ...telemetry.metrics import EventLoopMetrics
 
 logger = logging.getLogger(__name__)
@@ -99,12 +99,12 @@ class BidiAgent(LocalAgent):
         system_prompt: str | list[SystemContentBlock] | None = None,
         messages: Messages | None = None,
         record_direct_tool_call: bool = True,
-        load_tools_from_directory: bool = False,
         agent_id: str | None = None,
         name: str | None = None,
         description: str | None = None,
         hooks: list[HookProvider] | None = None,
         state: AgentState | dict | None = None,
+        session_manager: "SessionManager[LocalAgent] | None" = None,
         storage: Storage | None = None,
     ):
         """Initialize bidirectional agent.
@@ -116,15 +116,16 @@ class BidiAgent(LocalAgent):
                 Structured blocks are retained, while their text is passed to Bidi models as a string.
             messages: Optional conversation history to initialize with.
             record_direct_tool_call: Whether to record direct tool calls in message history.
-            load_tools_from_directory: Whether to load and automatically reload tools in the `./tools/` directory.
             agent_id: Optional ID for the agent, useful for connection management and multi-agent scenarios.
             name: Name of the Agent.
             description: Description of what the Agent does.
             hooks: Optional list of hook providers to register for lifecycle events.
             state: Stateful information for the agent. Can be either an AgentState object, or a json serializable dict.
+            session_manager: Manager for handling agent sessions including conversation history and state.
+                If provided, enables session-based persistence and state management.
             storage: Default storage backend for agent subsystems.
                 When provided, subsystems that do not have their own explicit storage
-                resolve from this value. Each subsystem
+                (e.g., SessionManager) resolve from this value. Each subsystem
                 auto-namespaces under its own prefix to avoid key collisions.
                 Storage specified directly on a subsystem always takes precedence over
                 this agent-level default. Defaults to None.
@@ -159,19 +160,12 @@ class BidiAgent(LocalAgent):
 
         # Tool execution configuration
         self.record_direct_tool_call = record_direct_tool_call
-        self.load_tools_from_directory = load_tools_from_directory
 
         # Initialize tool registry
         self.tool_registry = ToolRegistry()
 
         if tools is not None:
             self.tool_registry.process_tools(tools)
-
-        self.tool_registry.initialize_tools(self.load_tools_from_directory)
-
-        # Initialize tool watcher if directory loading is enabled
-        if self.load_tools_from_directory:
-            self._tool_watcher = ToolWatcher(tool_registry=self.tool_registry)
 
         # Initialize agent state management
         if state is not None:
@@ -196,8 +190,12 @@ class BidiAgent(LocalAgent):
             for hook in hooks:
                 self.hooks.add_hook(hook)
 
-        self._session_manager = None
-        self._session_id = uuid.uuid4().hex[:8]
+        self._session_manager = session_manager
+        if self._session_manager:
+            self._session_id: str = getattr(self._session_manager, "session_id", uuid.uuid4().hex[:8])
+            self.hooks.add_hook(self._session_manager)
+        else:
+            self._session_id = uuid.uuid4().hex[:8]
 
         self._loop = _AgentLoop(self)
 
@@ -434,10 +432,17 @@ class BidiAgent(LocalAgent):
 
         Yields:
             Model output events processed by background tasks including audio output,
-            text responses, tool calls, and connection updates.
+            text responses, tool calls, and connection updates. The agent also yields:
+
+            - A completed ``BidiTextBlockEvent``, ``BidiReasoningBlockEvent``, or
+              ``BidiTranscriptBlockEvent`` after each text, reasoning, or transcript stop event.
+            - Tool execution events such as ``ToolStreamEvent`` and ``ToolResultEvent``, and a
+              ``ToolResultMessageEvent`` once a tool group's results are recorded.
 
         Raises:
             RuntimeError: If start has not been called.
+            ConnectionTimeoutError: If the model connection times out and automatic restart is
+                disabled.
         """
         if not self._started:
             raise RuntimeError("agent not started | call start before receiving")

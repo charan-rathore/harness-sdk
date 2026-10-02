@@ -262,7 +262,7 @@ class _AudioOutputStream(OutputStream):
             logger.debug("audio_bytes=<%d> | audio chunk buffered for playback", len(data))
 
         elif isinstance(event, BidiBargeInEvent):
-            logger.debug("reason=<%s> | clearing audio buffer due to barge-in", event["reason"])
+            logger.debug("clearing audio buffer due to barge-in")
             self._buffer.clear()
             if self._audio_processor is not None:
                 self._audio_processor.clear_far_data()

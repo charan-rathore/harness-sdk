@@ -2,6 +2,8 @@
 title: Build a voice agent
 tags: [bidi-streaming, quickstart]
 description: "Build voice-enabled AI agents with real-time audio streaming. Works with Amazon Nova Sonic, Gemini Live, and OpenAI Realtime."
+redirectFrom:
+  - docs/user-guide/sdk/bidirectional-streaming/quickstart
 ---
 
 
@@ -527,26 +529,26 @@ audio_io = AudioIO(input_device_index=1)
 
 ### Connection Restarts
 
-Each provider caps how long a single connection stays open. Rather than wait for that limit, `BidiAgent` reconnects proactively: a timer fires ahead of the cap, the agent replays the conversation history into a fresh connection, and it emits a `BidiConnectionRestartEvent` with `reason="scheduled"`. If a connection times out first, the agent reconnects reactively and emits the same event with `reason="timeout"`. Treat both as informational, not errors:
+Each provider caps how long a single connection stays open. Rather than wait for that limit, `BidiAgent` restarts the connection proactively: a timer fires ahead of the cap, the agent replays the conversation history into a fresh connection, and it emits a `BidiConnectionRestartEvent` with `reason="scheduled"`. If a connection times out first, the agent restarts reactively and emits the same event with `reason="timeout"`. Treat both as informational, not errors:
 
 ```python
 from strands.bidi.types import BidiConnectionRestartEvent
 
 async for event in agent.receive():
     if isinstance(event, BidiConnectionRestartEvent):
-        print(f"Reconnecting (reason={event.reason})")
+        print(f"Restarting (reason={event.reason})")
         if event.turn_interrupted:
             print("The in-progress turn was cut short; consider re-prompting.")
         continue
 ```
 
-Providers declare reconnect timing through `ConnectionConfig`. Tune it, or opt out of
-automatic reconnect with the model's `connection` argument:
+Providers declare restart timing through `ConnectionConfig`. Tune it, or opt out of
+automatic restart with the model's `connection` argument:
 
 ```python
 from strands.bidi.models import BedrockNovaSonicModel
 
-# Reconnect 60s earlier than the provider default
+# Restart 60s earlier than the provider default
 model = BedrockNovaSonicModel(
     model_id="amazon.nova-2-sonic-v1:0",
     connection={"restart_after_s": 360},

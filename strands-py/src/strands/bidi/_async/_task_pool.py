@@ -24,6 +24,9 @@ class _TaskPool:
 
         Adds a clean up callback to run after task completes.
 
+        Args:
+            coro: Coroutine to run as a task in the pool.
+
         Returns:
             The created task.
         """

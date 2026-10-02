@@ -309,7 +309,7 @@ async def test_tool_call_span_closed_on_error(loop, agent, agenerator, otel_setu
 async def test_connection_restart_span(loop, agent, agenerator, otel_setup):
     """Connection restart creates a span with error message."""
     timeout_error = ConnectionTimeoutError("8 minute timeout")
-    close_event = BidiConnectionStopEvent(connection_id="test", reason="complete")
+    close_event = BidiConnectionStopEvent(connection_id="test", reason="user_request")
 
     agent.model.receive = unittest.mock.Mock(side_effect=[timeout_error, agenerator([close_event])])
 
@@ -380,7 +380,7 @@ async def test_barge_in_event_recorded_on_session_span(loop, agent, agenerator, 
     """Barge-in events are added to the session span."""
     events = [
         BidiResponseStartEvent(response_id="resp-3"),
-        BidiBargeInEvent(reason="user_speech"),
+        BidiBargeInEvent(),
         BidiResponseStopEvent(response_id="resp-3"),
     ]
     agent.model.receive = unittest.mock.Mock(return_value=agenerator(events))
@@ -398,9 +398,7 @@ async def test_barge_in_event_recorded_on_session_span(loop, agent, agenerator, 
     assert len(session_spans) == 1
 
     span_events = session_spans[0].events
-    assert any(
-        event.name == "bidi_barge_in" and event.attributes["barge_in.reason"] == "user_speech" for event in span_events
-    )
+    assert any(event.name == "bidi_barge_in" for event in span_events)
 
 
 @pytest.mark.asyncio

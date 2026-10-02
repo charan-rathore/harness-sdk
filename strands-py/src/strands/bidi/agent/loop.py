@@ -53,7 +53,7 @@ from ..types.events import (
     BidiUsageEvent,
 )
 from ._blocks import _ReasoningBlock, _TextBlock, _TranscriptBlock
-from ._reconnect_timer import _ReconnectTimer, resolve_deadline_s
+from ._restart_timer import _RestartTimer, resolve_deadline_s
 
 if TYPE_CHECKING:
     from .agent import BidiAgent
@@ -63,10 +63,10 @@ logger = logging.getLogger(__name__)
 # Bound on awaiting a superseded reader after its stream is closed before cancelling it.
 _MODEL_RESTART_STOP_TIMEOUT_S = 2
 
-# Fixed advance notice, in seconds before a scheduled reconnect, for the warning event.
+# Fixed advance notice, in seconds before a scheduled restart, for the warning event.
 _MODEL_RESTART_WARNING_S = 10
 
-# Max seconds a proactive reconnect waits for a turn boundary before forcing the swap.
+# Max seconds a proactive restart waits for a turn boundary before forcing the swap.
 _MODEL_RESTART_TURN_TIMEOUT_S = 10
 
 
@@ -94,7 +94,7 @@ class _AgentLoop:
             This allows passing custom data (user_id, session_id, database connections, etc.)
             that tools can access via their invocation_state parameter.
         _send_gate: Gate the sending of events to the model.
-            Blocks while the agent is reconnecting the model connection.
+            Blocks while the agent is restarting the model connection.
     """
 
     def __init__(self, agent: "BidiAgent") -> None:
@@ -127,20 +127,20 @@ class _AgentLoop:
         self._baseline_total_tokens = 0
         self._baseline_cache_read_tokens = 0
 
-        self._reconnect_timer = _ReconnectTimer(
-            on_warning=self._on_reconnect_warning,
-            on_deadline=self._on_reconnect_deadline,
+        self._restart_timer = _RestartTimer(
+            on_warning=self._on_restart_warning,
+            on_deadline=self._on_restart_deadline,
         )
         # Guards _restart_connection against concurrent reactive + proactive entry.
-        self._reconnecting = False
-        # Incremented per reconnect so a superseded reader's events (and its stream-close
+        self._restarting = False
+        # Incremented per restart so a superseded reader's events (and its stream-close
         # error) are dropped rather than forwarded after the swap.
         self._generation = 0
 
-        # Turn-boundary tracking, so a proactive reconnect waits for the current turn to
+        # Turn-boundary tracking, so a proactive restart waits for the current turn to
         # finish rather than cutting off a response or dropping an unanswered user turn.
         # A provider that emits neither response nor transcript events never leaves the
-        # boundary state, so the aligned wait is a no-op (reconnect fires immediately).
+        # boundary state, so the aligned wait is a no-op (restart fires immediately).
         self._response_active = False
         self._awaiting_response = False
         self._turn_complete = asyncio.Event()
@@ -202,15 +202,20 @@ class _AgentLoop:
         self._send_gate.set()
         self._started = True
 
-        self._arm_reconnect_timer()
+        self._arm_restart_timer()
 
     async def stop(self) -> None:
-        """Stop the agent loop."""
+        """Stop the agent loop.
+
+        Closes the send gate and cancels the restart timer, then cancels background tasks (the
+        model reader and running tools) and stops the model. The session span is ended and
+        ``BidiAgentStopEvent`` fires even if teardown fails.
+        """
         logger.debug("agent loop stopping")
 
         self._started = False
         self._send_gate.clear()
-        self._reconnect_timer.cancel()
+        self._restart_timer.cancel()
         # Unblock a deadline callback waiting on a turn boundary (it is past the timer's cancel);
         # once released it re-checks _started and no-ops.
         self._turn_complete.set()
@@ -264,7 +269,7 @@ class _AgentLoop:
             }
             await self._agent._append_messages(message)
 
-            # Let scheduled reconnects wait for the response.
+            # Let scheduled restarts wait for the response.
             self._awaiting_response = True
             self._update_turn_state()
 
@@ -293,7 +298,7 @@ class _AgentLoop:
                 error = event.error
                 if isinstance(error, ConnectionTimeoutError):
                     logger.debug("model timeout error received")
-                    if not self._auto_reconnect_enabled():
+                    if not self._auto_restart_enabled():
                         logger.debug("auto_reconnect disabled | surfacing timeout to caller")
                         raise error
                     restart_event = BidiConnectionRestartEvent(
@@ -308,8 +313,8 @@ class _AgentLoop:
                             restart_event=restart_event,
                         )
                     except Exception:
-                        # The restart event was queued before the failing swap. Surface it before
-                        # preserving the existing behavior of raising the restart failure.
+                        # The restart event was queued before the failing swap. Surface it, then
+                        # raise the restart failure to the caller.
                         yield self._event_queue.get_nowait()
                         raise
                     continue
@@ -325,39 +330,39 @@ class _AgentLoop:
 
             yield event
 
-    def _auto_reconnect_enabled(self) -> bool:
-        """Whether the agent reconnects automatically.
+    def _auto_restart_enabled(self) -> bool:
+        """Whether the agent restarts the connection automatically.
 
-        Automatic reconnect is the default: a provider is opted in unless it explicitly
+        Automatic restart is the default: a provider is opted in unless it explicitly
         declares ``auto_reconnect: False`` in its connection config.
         """
         return self._agent.model.get_connection_config().get("auto_reconnect", True)
 
-    def _arm_reconnect_timer(self) -> None:
-        """Arm the proactive reconnect timer when the model opts in with a declared deadline.
+    def _arm_restart_timer(self) -> None:
+        """Arm the proactive restart timer when the model opts in with a declared deadline.
 
         Owns the arming policy (auto_reconnect + a declared ``restart_after_s``); the timer
-        itself is a pure mechanism. A no-op when reconnect is disabled or none is declared.
+        itself is a pure mechanism. A no-op when restart is disabled or none is declared.
         """
-        if not self._auto_reconnect_enabled():
+        if not self._auto_restart_enabled():
             return
         deadline_s = resolve_deadline_s(self._agent.model.get_connection_config())
         if deadline_s is None:
             return
-        self._reconnect_timer.arm(deadline_s, _MODEL_RESTART_WARNING_S)
+        self._restart_timer.arm(deadline_s, _MODEL_RESTART_WARNING_S)
 
-    async def _on_reconnect_warning(self, time_left_s: int) -> None:
-        """Timer callback: surface an approaching-reconnect warning to the receiver."""
-        logger.debug("time_left_s=<%.1f> | emitting connection warning", time_left_s)
+    async def _on_restart_warning(self, time_left_s: int) -> None:
+        """Timer callback: surface an approaching-restart warning to the receiver."""
+        logger.debug("time_left_s=<%s> | emitting connection warning", time_left_s)
         await self._event_queue.put(BidiConnectionWarningEvent(time_left_s=time_left_s))
 
-    async def _on_reconnect_deadline(self) -> None:
-        """Timer callback: align to a turn boundary, then reconnect proactively.
+    async def _on_restart_deadline(self) -> None:
+        """Timer callback: align to a turn boundary, then restart proactively.
 
         Waits (bounded) for the current turn to finish so the swap does not cut off a
         response or drop an unanswered user turn; surfaces any failure on the event queue.
         """
-        logger.debug("proactive reconnect deadline reached")
+        logger.debug("proactive restart deadline reached")
         # Capture before the wait so _restart_connection can decline if the loop stopped or a
         # reactive swap ran while we waited.
         generation = self._generation
@@ -372,7 +377,7 @@ class _AgentLoop:
             await self._event_queue.put(error)
 
     async def _await_turn_boundary(self) -> None:
-        """Wait for the current turn to finish, bounded so the reconnect beats the limit.
+        """Wait for the current turn to finish, bounded so the restart beats the limit.
 
         Returns immediately at a turn boundary (including for a provider that emits no turn
         events). Otherwise waits up to ``_MODEL_RESTART_TURN_TIMEOUT_S`` for the turn to complete, then
@@ -384,7 +389,7 @@ class _AgentLoop:
             await asyncio.wait_for(self._turn_complete.wait(), timeout=_MODEL_RESTART_TURN_TIMEOUT_S)
         except asyncio.TimeoutError:
             logger.debug(
-                "no turn boundary within %.1fs | forcing reconnect",
+                "timeout_s=<%s> | no turn boundary, forcing restart",
                 _MODEL_RESTART_TURN_TIMEOUT_S,
             )
 
@@ -425,7 +430,7 @@ class _AgentLoop:
             swap itself fails.
         """
         if not self._started:
-            logger.debug("loop stopped | ignoring reconnect trigger")
+            logger.debug("loop stopped | ignoring restart trigger")
             return False
         if generation != self._generation:
             logger.debug(
@@ -434,11 +439,11 @@ class _AgentLoop:
                 self._generation,
             )
             return False
-        if self._reconnecting:
-            logger.debug("reconnect already in progress | ignoring duplicate trigger")
+        if self._restarting:
+            logger.debug("restart already in progress | ignoring duplicate trigger")
             return False
-        self._reconnecting = True
-        self._reconnect_timer.cancel()
+        self._restarting = True
+        self._restart_timer.cancel()
 
         reason: Literal["timeout", "scheduled"] = "timeout" if timeout_error is not None else "scheduled"
         logger.debug("reason=<%s> | resetting model connection", reason)
@@ -462,10 +467,10 @@ class _AgentLoop:
             await self._swap_connection(reason, timeout_error)
 
             self._reset_turn_state()
-            self._arm_reconnect_timer()
+            self._arm_restart_timer()
             self._send_gate.set()
         finally:
-            self._reconnecting = False
+            self._restarting = False
 
         return True
 
@@ -475,7 +480,7 @@ class _AgentLoop:
         """Swap to a new connection under a restart span, firing the after-restart hook.
 
         Supersedes the current reader (generation bump) so its stream-close error is fenced
-        rather than forwarded, then reconnects and starts the new reader. A failed swap is
+        rather than forwarded, then restarts the connection and starts the new reader. A failed swap is
         re-raised after telemetry and the after-restart hook report it, leaving the gate closed.
         """
         restart_span = _telemetry.start_restart_span(
@@ -562,7 +567,7 @@ class _AgentLoop:
         self._baseline_cache_read_tokens = 0
 
     def _fold_token_baseline(self) -> None:
-        """Fold the current connection's token totals into the baseline before reconnect."""
+        """Fold the current connection's token totals into the baseline before restart."""
         self._baseline_input_tokens += self._current_input_tokens
         self._baseline_output_tokens += self._current_output_tokens
         self._baseline_total_tokens += self._current_total_tokens
@@ -594,7 +599,7 @@ class _AgentLoop:
     async def _run_model(self, generation: int) -> None:
         """Task for running the model.
 
-        Events are streamed through the event queue. Once superseded by a reconnect
+        Events are streamed through the event queue. Once superseded by a restart
         (``generation`` no longer current), the stream-close error and any further handling
         are dropped, so a closed old connection cannot mutate the new connection's state.
         """
@@ -684,12 +689,12 @@ class _AgentLoop:
 
                 elif isinstance(event, BidiBargeInEvent):
                     if self._session_span:
-                        _telemetry.add_barge_in_event(self._session_span, event["reason"])
+                        _telemetry.add_barge_in_event(self._session_span)
 
                     # A barge-in ends the current response; the user's next turn owes a reply.
                     self._response_active = False
                     self._update_turn_state()
-                    await self._agent.hooks.invoke_callbacks_async(BidiBargeInHookEvent(self._agent, event["reason"]))
+                    await self._agent.hooks.invoke_callbacks_async(BidiBargeInHookEvent(self._agent))
 
                 elif isinstance(event, BidiResponseStopEvent):
                     if response_span:

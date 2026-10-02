@@ -21,7 +21,7 @@ _MODULE_PATHS = (
     "_audio.processor",
     "_telemetry",
     "agent._blocks",
-    "agent._reconnect_timer",
+    "agent._restart_timer",
     "agent.agent",
     "agent.loop",
     "hooks.events",

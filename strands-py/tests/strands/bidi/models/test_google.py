@@ -292,7 +292,7 @@ async def test_stop_is_idempotent(mock_genai_client, model):
 
 
 def test_connection_config_declared(model):
-    """Gemini declares a proactive reconnect deadline and per-response (non-cumulative) usage."""
+    """Gemini declares a proactive restart deadline and per-response (non-cumulative) usage."""
     assert model.get_connection_config()["restart_after_s"] == 540
     assert model.usage_is_cumulative is False
 
@@ -316,7 +316,7 @@ def test_context_window_compression_overridable(mock_genai_client, model_id, api
 
 
 def test_connection_config_override(mock_genai_client, model_id, api_key):
-    """Connection config tunes reconnect timing over the provider default."""
+    """Connection config tunes restart timing over the provider default."""
     _ = mock_genai_client
     model = GoogleGeminiLiveModel(
         model_id=model_id,
@@ -561,11 +561,11 @@ async def test_turn_state_is_per_reader(model, live_message):
 
 
 @pytest.mark.asyncio
-async def test_proactive_reconnect_end_to_end_through_agent(mock_genai_client, model_id, api_key, monkeypatch):
-    """End-to-end: BidiAgent + real Gemini model proactively reconnects before the deadline.
+async def test_proactive_restart_end_to_end_through_agent(mock_genai_client, model_id, api_key, monkeypatch):
+    """End-to-end: BidiAgent + real Gemini model proactively restarts before the deadline.
 
     Drives the full chain against the real GoogleGeminiLiveModel (mocked genai transport): the loop
-    reads Gemini's connection config, arms the proactive timer, emits a warning, and reconnects
+    reads Gemini's connection config, arms the proactive timer, emits a warning, and restarts
     through Gemini's own restart() before the deadline, resuming the session via its handle. No
     live network calls are made.
     """
@@ -575,7 +575,7 @@ async def test_proactive_reconnect_end_to_end_through_agent(mock_genai_client, m
     mock_client, mock_live_session, _ = mock_genai_client
 
     # The session never emits on its own; receive() blocks so the model task idles while the
-    # proactive timer drives the reconnect.
+    # proactive timer drives the restart.
     never = asyncio.Event()
 
     def blocking_receive():
@@ -596,7 +596,7 @@ async def test_proactive_reconnect_end_to_end_through_agent(mock_genai_client, m
     agent = BidiAgent(model=model, system_prompt="You are helpful")
 
     # Drive the timer without wall time: the first cycle's sleeps return immediately, the re-armed
-    # cycle after the swap parks, so exactly one proactive reconnect fires.
+    # cycle after the swap parks, so exactly one proactive restart fires.
     sleep_count = 0
 
     async def fake_sleep(_seconds):
@@ -606,12 +606,12 @@ async def test_proactive_reconnect_end_to_end_through_agent(mock_genai_client, m
             await asyncio.Event().wait()
         await asyncio.sleep(0)
 
-    agent._loop._reconnect_timer._sleep = fake_sleep
+    agent._loop._restart_timer._sleep = fake_sleep
 
     await agent.start()
     first_connection_id = model._connection_id
     # A resumable handle captured mid-session (as a real session_resumption_update would set it);
-    # the proactive reconnect must resume with it. Set after start(), since a fresh start clears
+    # the proactive restart must resume with it. Set after start(), since a fresh start clears
     # any pre-existing handle.
     model._live_session_handle = "resume-handle"
 
@@ -619,14 +619,14 @@ async def test_proactive_reconnect_end_to_end_through_agent(mock_genai_client, m
     async for event in agent.receive():
         if isinstance(event, BidiConnectionWarningEvent):
             warning_seen = True
-        # Once a reconnect has produced a new connection id, the proactive cycle completed.
+        # Once a restart has produced a new connection id, the proactive cycle completed.
         if model._connection_id is not None and model._connection_id != first_connection_id:
             break
 
     assert warning_seen
     assert model._connection_id != first_connection_id
 
-    # The reconnect resumed the session via the tracked handle rather than starting fresh.
+    # The restart resumed the session via the tracked handle rather than starting fresh.
     resumed_config = mock_client.aio.live.connect.call_args.kwargs["config"]
     assert resumed_config["session_resumption"]["handle"] == "resume-handle"
 
@@ -923,7 +923,7 @@ async def test_event_conversion(mock_genai_client, model, live_message, server_c
 
     barge_in_events = model._convert_gemini_live_event(mock_barge_in, turn_state)
     assert barge_in_events == [
-        BidiBargeInEvent(reason="user_speech"),
+        BidiBargeInEvent(),
         BidiAudioStopEvent(content_id=unittest.mock.ANY),
     ]
 
@@ -1049,7 +1049,7 @@ def test_barge_in_emitted_alongside_other_server_content(model, complete_with_ou
     tru_events = [event for message in messages for event in model._convert_gemini_live_event(message, turn_state)]
     exp_events = [
         BidiResponseStartEvent(unittest.mock.ANY),
-        BidiBargeInEvent("user_speech"),
+        BidiBargeInEvent(),
         BidiTranscriptStartEvent("assistant", content_id=unittest.mock.ANY),
         BidiTranscriptDeltaEvent("partial reply", "assistant", content_id=unittest.mock.ANY),
         BidiTranscriptStopEvent("assistant", content_id=unittest.mock.ANY),
@@ -1098,7 +1098,7 @@ async def test_barge_in_preserves_user_transcription_already_in_progress(
         turn_state,
     )
     exp_events = [
-        BidiBargeInEvent("user_speech"),
+        BidiBargeInEvent(),
         BidiTranscriptDeltaEvent(" second", "user", started[0].content_id),
     ]
     assert tru_events == exp_events
@@ -1150,7 +1150,7 @@ def test_transcription_fragments_complete_at_turn_boundary(model):
             True,
             [{"interrupted": True}, {"turn_complete": True}],
             [
-                BidiBargeInEvent(reason="user_speech"),
+                BidiBargeInEvent(),
                 BidiTranscriptStopEvent("user", content_id=unittest.mock.ANY),
                 BidiResponseStopEvent("r1"),
             ],
@@ -1160,7 +1160,7 @@ def test_transcription_fragments_complete_at_turn_boundary(model):
             True,
             [{"interrupted": True, "turn_complete": True}],
             [
-                BidiBargeInEvent(reason="user_speech"),
+                BidiBargeInEvent(),
                 BidiTranscriptStopEvent("user", content_id=unittest.mock.ANY),
                 BidiResponseStopEvent("r1"),
             ],
@@ -1353,7 +1353,7 @@ def test_audio_stops_once_at_generation_boundary(model, live_message, server_con
         BidiAudioDeltaEvent("Zmlyc3Q=", format="pcm", sample_rate=24000, channels=1, content_id=content_id),
     ]
     if ending == "interrupted":
-        exp_events.append(BidiBargeInEvent(reason="user_speech"))
+        exp_events.append(BidiBargeInEvent())
     exp_events.extend(
         [
             BidiAudioDeltaEvent("bGFzdA==", format="pcm", sample_rate=24000, channels=1, content_id=content_id),
@@ -1390,7 +1390,7 @@ async def test_turn_complete_without_open_response_emits_nothing(
     tru_events.extend(
         model._convert_gemini_live_event(live_message(server_content=server_content(turn_complete=True)), turn_state)
     )
-    exp_events = [BidiBargeInEvent("user_speech")] if interrupted else []
+    exp_events = [BidiBargeInEvent()] if interrupted else []
     assert tru_events == exp_events
 
 
@@ -1413,7 +1413,7 @@ async def test_barge_in_completes_at_turn_boundary(
 
     events = model._convert_gemini_live_event(live_message(server_content=server_content(interrupted=True)), turn_state)
 
-    assert events == [BidiBargeInEvent(reason="user_speech")]
+    assert events == [BidiBargeInEvent()]
     assert turn_state.response_id is not None
 
     tru_events = model._convert_gemini_live_event(

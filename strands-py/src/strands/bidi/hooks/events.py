@@ -60,16 +60,11 @@ class BidiBargeInEvent(_HookEvent):
     """Event triggered to stop current response generation or playback.
 
     This event is fired when the user barges in (e.g., by speaking during the
-    assistant's response) or when an error stops output. This is
-    specific to a response and does not pause the bidirectional session.
+    assistant's response). This is specific to a response and does not pause
+    the bidirectional session.
 
     Hook providers can use this event to log barge-ins, stop playback, or trigger cleanup.
-
-    Attributes:
-        reason: Why response output should stop ("user_speech" or "error").
     """
-
-    reason: Literal["user_speech", "error"]
 
 
 @dataclass
@@ -77,7 +72,7 @@ class BidiBeforeConnectionRestartEvent(_HookEvent):
     """Event emitted before the agent restarts the model connection.
 
     A restart is triggered either reactively, after the model reports a timeout, or
-    proactively, when the reconnect timer fires ahead of the provider's limit.
+    proactively, when the restart timer fires ahead of the provider's limit.
 
     Attributes:
         reason: What triggered the restart ("timeout" reactively, "scheduled" proactively).

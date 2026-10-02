@@ -35,7 +35,7 @@ class _TaskGroup:
         return self
 
     async def __aexit__(self, *_: Any) -> None:
-        """Execute tasks in group.
+        """Wait for all tasks in the group, cancelling the rest if one fails.
 
         The following execution rules are enforced:
         - The context stops executing all tasks if at least one task raises an Exception or the context is cancelled.

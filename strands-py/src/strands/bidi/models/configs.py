@@ -86,21 +86,21 @@ class GoogleGeminiLiveAudioConfig(TypedDict, total=False):
 
 
 class ConnectionConfig(TypedDict, total=False):
-    """Declared reconnect timing for a bidirectional model.
+    """Declared restart timing for a bidirectional model.
 
-    Providers declare this so the agent loop can reconnect proactively, before the provider
+    Providers declare this so the agent loop can restart the connection proactively, before the provider
     terminates the connection on its own limit. A provider that declares nothing (empty config)
-    keeps reactive-only behavior: no proactive timer, reconnect only after the provider reports
+    keeps reactive-only behavior: no proactive timer, restart only after the provider reports
     a timeout.
 
     All fields are optional. The proactive timer arms only when ``restart_after_s`` is declared.
 
     Attributes:
         restart_after_s: Seconds after a connection is established at which to proactively
-            reconnect. Set it at least ~10s below the provider's own connection limit:
-            the reconnect may wait briefly for the current turn to finish (aligning the swap to a
+            restart. Set it at least ~10s below the provider's own connection limit:
+            the restart may wait briefly for the current turn to finish (aligning the swap to a
             turn boundary), and that wait plus the swap must complete before the provider's limit.
-        auto_reconnect: Whether the loop reconnects automatically (default True).
+        auto_reconnect: Whether the loop restarts the connection automatically (default True).
     """
 
     restart_after_s: int
@@ -113,7 +113,7 @@ class ModelConfig(TypedDict, total=False):
     Attributes:
         model_id: Provider model identifier.
         params: Provider-specific keyword arguments passed to the model request or session.
-        connection: Reconnect timing overrides.
+        connection: Restart timing overrides.
     """
 
     model_id: Required[str]
@@ -127,7 +127,7 @@ class ModelUpdateConfig(TypedDict, total=False):
     Attributes:
         model_id: Provider model identifier.
         params: Provider-specific keyword arguments passed to the model request or session.
-        connection: Reconnect timing overrides.
+        connection: Restart timing overrides.
     """
 
     model_id: str

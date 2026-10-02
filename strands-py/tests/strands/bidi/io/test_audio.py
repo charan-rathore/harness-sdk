@@ -204,7 +204,7 @@ async def test_audio_io_output_barge_in(audio_output):
         content_id="audio",
     )
     await audio_output(audio_event)
-    barge_in_event = BidiBargeInEvent(reason="user_speech")
+    barge_in_event = BidiBargeInEvent()
     await audio_output(barge_in_event)
 
     tru_data, _ = audio_output._callback(None, frame_count=1)
@@ -642,7 +642,7 @@ async def test_output_clears_reference_on_barge_in(py_audio, aec_agent, mock_aud
     )
     output._callback(None, frame_count=2)
 
-    await output(BidiBargeInEvent(reason="user_speech"))
+    await output(BidiBargeInEvent())
 
     assert audio_io._audio_processor._get_far_data() == b""
     await input_.stop()

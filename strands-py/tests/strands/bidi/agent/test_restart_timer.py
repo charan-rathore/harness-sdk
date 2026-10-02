@@ -1,4 +1,4 @@
-"""Unit tests for the proactive reconnect timer.
+"""Unit tests for the proactive restart timer.
 
 The timer is exercised with an injected fake clock so timing is deterministic and does
 not depend on wall time or a running provider.
@@ -8,13 +8,13 @@ import asyncio
 
 import pytest
 
-from strands.bidi.agent._reconnect_timer import _ReconnectTimer, resolve_deadline_s
+from strands.bidi.agent._restart_timer import _RestartTimer, resolve_deadline_s
 
 # resolve_deadline_s
 
 
 def test_resolve_deadline_none_when_not_declared():
-    """No declared restart_after_s means no proactive timer; reconnect stays reactive-only."""
+    """No declared restart_after_s means no proactive timer; restart stays reactive-only."""
     assert resolve_deadline_s({}) is None
     assert resolve_deadline_s({"auto_reconnect": True}) is None
 
@@ -30,7 +30,7 @@ def test_resolve_deadline_none_when_not_positive():
     assert resolve_deadline_s({"restart_after_s": -5}) is None
 
 
-# _ReconnectTimer
+# _RestartTimer
 
 
 @pytest.mark.asyncio
@@ -42,7 +42,7 @@ async def test_timer_fires_warning_then_deadline():
     async def fake_sleep(seconds):
         sleeps.append(seconds)
 
-    timer = _ReconnectTimer(
+    timer = _RestartTimer(
         on_warning=lambda t: _record(warnings, t),
         on_deadline=lambda: _record(deadlines, None),
         sleep=fake_sleep,
@@ -79,7 +79,7 @@ async def test_timer_deadline_countdown_continues_while_warning_is_blocked():
         warning_started.set()
         await release_warning.wait()
 
-    timer = _ReconnectTimer(
+    timer = _RestartTimer(
         on_warning=blocked_warning,
         on_deadline=lambda: _record(deadlines, None),
         sleep=fake_sleep,
@@ -101,7 +101,7 @@ async def test_timer_deadline_countdown_continues_while_warning_is_blocked():
 @pytest.mark.asyncio
 async def test_timer_cancel_is_safe_when_idle():
     """cancel() before arming does not raise."""
-    timer = _ReconnectTimer(on_warning=_noop_arg, on_deadline=_noop)
+    timer = _RestartTimer(on_warning=_noop_arg, on_deadline=_noop)
     timer.cancel()  # should not raise
 
 
@@ -116,7 +116,7 @@ async def test_timer_rearm_cancels_previous():
         started.set()
         await asyncio.sleep(3600)
 
-    timer = _ReconnectTimer(
+    timer = _RestartTimer(
         on_warning=_noop_arg,
         on_deadline=lambda: _record(deadlines, None),
         sleep=slow_sleep,

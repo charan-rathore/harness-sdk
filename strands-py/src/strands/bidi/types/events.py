@@ -1,24 +1,10 @@
-"""Bidirectional streaming types for real-time audio/text conversations.
+"""Output event types for bidirectional streaming.
 
-Type definitions for bidirectional streaming that extends Strands' existing streaming
-capabilities with real-time audio and persistent connection support.
-
-Key features:
-
-- Audio output events with standardized formats
-- Barge-in detection and handling
-- Connection lifecycle management
-- Provider-agnostic event types
-- Type-safe discriminated unions with TypedEvent
-- JSON-serializable output events (audio stored as base64 strings)
-
-Audio format normalization:
-
-- Supports PCM, WAV, Opus, and MP3 formats
-- Describes sample rates in Hz
-- Normalizes channel configurations (mono/stereo)
-- Abstracts provider-specific encodings
-- Audio output stored as base64-encoded strings for JSON compatibility
+Defines the provider-agnostic events produced by bidirectional models and ``BidiAgent``:
+connection lifecycle (start, restart, warning, stop), response start and stop, audio, text,
+reasoning, and transcript streams (start, delta, stop, and the completed block), barge-in,
+token usage, and tool-use groups. Also defines the ``AudioChannel``, ``AudioFormat``, and
+``Role`` literals and the ``BidiOutputEvent`` union.
 """
 
 import logging
@@ -39,7 +25,11 @@ AudioChannel = Literal[1, 2]
 - Stereo: 2
 """
 AudioFormat = Literal["pcm", "wav", "opus", "mp3"]
-"""Audio encoding format."""
+"""Audio encoding format of model audio output and ``AudioStreamConfig``.
+
+Distinct from ``strands.types.media.AudioFormat``, the wider set of formats that types
+``AudioDelta.format`` on audio input.
+"""
 
 Role = Literal["user", "assistant"]
 """Role of a message sender.
@@ -81,7 +71,7 @@ def _normalize_role(role: Any, default: Role = "user") -> Role:
 class BidiConnectionStartEvent(TypedEvent):
     """Streaming connection established and ready for interaction.
 
-    Parameters:
+    Args:
         connection_id: Unique identifier for this streaming connection.
         model: Model identifier (e.g., "gpt-realtime-2.1", "gemini-3.8-live").
     """
@@ -110,16 +100,16 @@ class BidiConnectionStartEvent(TypedEvent):
 class BidiConnectionRestartEvent(TypedEvent):
     """Agent is restarting the model connection.
 
-    Emitted on both reconnect paths: reactively after the model reports a timeout, and
-    proactively when the reconnect timer fires ahead of the provider's limit.
+    Emitted on both restart paths: reactively after the model reports a timeout, and
+    proactively when the restart timer fires ahead of the provider's limit.
 
-    Parameters:
+    Args:
         reason: What triggered the restart ("timeout" reactively, "scheduled" proactively).
         timeout_error: The model's timeout error on the reactive path; None when scheduled.
-        turn_interrupted: True if the restart cut an in-progress or owed turn (the alignment
-            wait could not complete it before the deadline, or a timeout struck mid-turn). The
-            provider replays history as context, so that turn will not be answered on its own —
-            an app can re-prompt or notify the user when this is set.
+        turn_interrupted: True if the restart cut off an in-progress assistant response or a
+            user turn that had not been answered yet. The new connection receives the history
+            as context, so that turn is not answered on its own; an app can re-prompt or notify
+            the user when this is set.
     """
 
     def __init__(
@@ -139,9 +129,9 @@ class BidiConnectionRestartEvent(TypedEvent):
         )
 
     @property
-    def reason(self) -> str:
+    def reason(self) -> Literal["timeout", "scheduled"]:
         """What triggered the restart ("timeout" or "scheduled")."""
-        return cast(str, self["reason"])
+        return cast(Literal["timeout", "scheduled"], self["reason"])
 
     @property
     def timeout_error(self) -> "ConnectionTimeoutError | None":
@@ -150,17 +140,17 @@ class BidiConnectionRestartEvent(TypedEvent):
 
     @property
     def turn_interrupted(self) -> bool:
-        """True if the restart cut an in-progress or owed turn that will not be answered."""
+        """True if the restart cut off an in-progress response or an unanswered user turn."""
         return cast(bool, self["turn_interrupted"])
 
 
 class BidiConnectionWarningEvent(TypedEvent):
-    """Agent is approaching a proactive reconnect.
+    """Agent is approaching a proactive restart.
 
-    Emitted by the proactive reconnect timer before a reconnect; informational only.
+    Emitted by the proactive restart timer before a restart; informational only.
 
-    Parameters:
-        time_left_s: Approximate seconds until the scheduled reconnect.
+    Args:
+        time_left_s: Approximate seconds until the scheduled restart.
     """
 
     def __init__(self, time_left_s: float):
@@ -174,14 +164,14 @@ class BidiConnectionWarningEvent(TypedEvent):
 
     @property
     def time_left_s(self) -> float:
-        """Approximate seconds until the scheduled reconnect."""
+        """Approximate seconds until the scheduled restart."""
         return cast(float, self["time_left_s"])
 
 
 class BidiResponseStartEvent(TypedEvent):
     """Start of a model response.
 
-    Parameters:
+    Args:
         response_id: Unique identifier for this response (used in BidiResponseStopEvent).
     """
 
@@ -211,7 +201,7 @@ class BidiAudioStartEvent(TypedEvent):
 class BidiAudioDeltaEvent(TypedEvent):
     """Incremental audio output from the model.
 
-    Parameters:
+    Args:
         audio: Base64-encoded audio chunk.
         format: Audio encoding format.
         sample_rate: Number of audio samples per second in Hz.
@@ -405,7 +395,7 @@ class BidiReasoningBlockEvent(TypedEvent):
 class BidiTranscriptStartEvent(TypedEvent):
     """Beginning of a user or assistant transcript, before its text arrives.
 
-    Parameters:
+    Args:
         role: Who is speaking ("user" or "assistant").
         content_id: Unique identifier shared by this transcript's events.
     """
@@ -434,7 +424,7 @@ class BidiTranscriptStartEvent(TypedEvent):
 class BidiTranscriptDeltaEvent(TypedEvent):
     """Incremental transcription of user or assistant speech.
 
-    Parameters:
+    Args:
         delta: The incremental transcript text.
         role: Who is speaking ("user" or "assistant").
         content_id: Unique identifier shared by this transcript's events.
@@ -470,7 +460,7 @@ class BidiTranscriptDeltaEvent(TypedEvent):
 class BidiTranscriptStopEvent(TypedEvent):
     """End of a transcript stream, before its completed block is emitted.
 
-    Parameters:
+    Args:
         role: Who spoke ("user" or "assistant").
         content_id: Unique identifier shared by this transcript's events.
     """
@@ -499,7 +489,7 @@ class BidiTranscriptStopEvent(TypedEvent):
 class BidiTranscriptBlockEvent(TypedEvent):
     """Complete transcript, emitted after its stop event by the agent.
 
-    Parameters:
+    Args:
         transcript: The final transcript text.
         role: Who spoke ("user" or "assistant").
         content_id: Unique identifier shared by this transcript's events.
@@ -533,31 +523,17 @@ class BidiTranscriptBlockEvent(TypedEvent):
 
 
 class BidiBargeInEvent(TypedEvent):
-    """Stop current response generation or playback while the session continues.
+    """Stop current response generation or playback while the session continues."""
 
-    Parameters:
-        reason: Why response output should stop.
-    """
-
-    def __init__(self, reason: Literal["user_speech", "error"]):
+    def __init__(self) -> None:
         """Initialize barge-in event."""
-        super().__init__(
-            {
-                "type": "bidi_barge_in",
-                "reason": reason,
-            }
-        )
-
-    @property
-    def reason(self) -> str:
-        """Why response output should stop."""
-        return cast(str, self["reason"])
+        super().__init__({"type": "bidi_barge_in"})
 
 
 class BidiResponseStopEvent(TypedEvent):
     """Response output ended. User transcription may still be pending.
 
-    Parameters:
+    Args:
         response_id: ID of the response that ended (matches BidiResponseStartEvent).
     """
 
@@ -596,7 +572,7 @@ class BidiUsageEvent(TypedEvent):
     Tracks token consumption across different modalities (audio, text, images)
     during bidirectional streaming sessions.
 
-    Parameters:
+    Args:
         input_tokens: Total tokens used for all input modalities.
         output_tokens: Total tokens used for all output modalities.
         total_tokens: Sum of input and output tokens.
@@ -663,7 +639,7 @@ class BidiUsageEvent(TypedEvent):
 class BidiToolUseBlocksEvent(TypedEvent):
     """A complete group of tool calls requested by the model.
 
-    Parameters:
+    Args:
         tool_uses: Tool calls to execute together.
     """
 
@@ -680,15 +656,15 @@ class BidiToolUseBlocksEvent(TypedEvent):
 class BidiConnectionStopEvent(TypedEvent):
     """Streaming connection closed.
 
-    Parameters:
+    Args:
         connection_id: Unique identifier for this streaming connection (matches BidiConnectionStartEvent).
-        reason: Why the connection was closed.
+        reason: Why the connection was closed. ``"user_request"`` after ``agent.cancel()`` takes effect.
     """
 
     def __init__(
         self,
         connection_id: str,
-        reason: Literal["client_disconnect", "timeout", "error", "complete", "user_request"],
+        reason: Literal["user_request"],
     ):
         """Initialize connection stop event."""
         super().__init__(
@@ -705,9 +681,9 @@ class BidiConnectionStopEvent(TypedEvent):
         return cast(str, self["connection_id"])
 
     @property
-    def reason(self) -> str:
+    def reason(self) -> Literal["user_request"]:
         """Why the connection was closed."""
-        return cast(str, self["reason"])
+        return cast(Literal["user_request"], self["reason"])
 
 
 # ============================================================================

@@ -86,7 +86,7 @@ from strands.bidi.types.events import _normalize_role
             {"transcript": "Hello", "role": "assistant", "content_id": "t1"},
             "bidi_transcript_block",
         ),
-        (BidiBargeInEvent, {"reason": "user_speech"}, "bidi_barge_in"),
+        (BidiBargeInEvent, {}, "bidi_barge_in"),
         (
             BidiResponseStopEvent,
             {"response_id": "r1"},
@@ -99,7 +99,7 @@ from strands.bidi.types.events import _normalize_role
         ),
         (
             BidiConnectionStopEvent,
-            {"connection_id": "c1", "reason": "complete"},
+            {"connection_id": "c1", "reason": "user_request"},
             "bidi_connection_stop",
         ),
     ],

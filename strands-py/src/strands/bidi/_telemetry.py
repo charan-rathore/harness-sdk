@@ -190,12 +190,11 @@ def end_connection_span(tracer: Tracer, span: Span, error: Exception | None = No
     tracer._end_span(span, error=error)
 
 
-def add_barge_in_event(span: Span, reason: str) -> None:
+def add_barge_in_event(span: Span) -> None:
     """Record a barge-in as a span event on the session span.
 
     Args:
         span: The session span to add the event to.
-        reason: Reason for the barge-in.
     """
     if span and span.is_recording():
-        span.add_event("bidi_barge_in", attributes={"barge_in.reason": reason})
+        span.add_event("bidi_barge_in")

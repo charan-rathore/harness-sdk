@@ -63,7 +63,7 @@ def response_stop_event(agent):
 
 @pytest.fixture
 def barge_in_event(agent):
-    return BidiBargeInEvent(agent=agent, reason="user_speech")
+    return BidiBargeInEvent(agent=agent)
 
 
 def test_event_should_reverse_callbacks(agent_stop_event, response_stop_event, barge_in_event):
@@ -74,10 +74,10 @@ def test_event_should_reverse_callbacks(agent_stop_event, response_stop_event, b
 
 
 def test_barge_in_event_fields(agent):
-    event = BidiBargeInEvent(agent=agent, reason="error")
+    event = BidiBargeInEvent(agent=agent)
 
     tru_event = {field.name: getattr(event, field.name) for field in fields(event)}
-    exp_event = {"agent": agent, "reason": "error"}
+    exp_event = {"agent": agent}
     assert tru_event == exp_event
 
 

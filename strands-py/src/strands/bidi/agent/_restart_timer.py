@@ -1,7 +1,7 @@
-"""Proactive reconnect timer for bidirectional streaming.
+"""Proactive restart timer for bidirectional streaming.
 
-``_ReconnectTimer`` fires a warning then a deadline callback at caller-supplied offsets;
-it holds no reconnect policy. ``resolve_deadline_s`` reads the deadline from a provider's
+``_RestartTimer`` fires a warning then a deadline callback at caller-supplied offsets;
+it holds no restart policy. ``resolve_deadline_s`` reads the deadline from a provider's
 declared ``ConnectionConfig``.
 """
 
@@ -15,10 +15,10 @@ logger = logging.getLogger(__name__)
 
 
 def resolve_deadline_s(connection_config: ConnectionConfig) -> int | None:
-    """Resolve the proactive reconnect deadline in seconds from a connection config.
+    """Resolve the proactive restart deadline in seconds from a connection config.
 
     Args:
-        connection_config: Provider-declared reconnect timing.
+        connection_config: Provider-declared restart timing.
 
     Returns:
         ``restart_after_s`` if declared and positive, else ``None`` (no proactive timer).
@@ -29,7 +29,7 @@ def resolve_deadline_s(connection_config: ConnectionConfig) -> int | None:
     return restart_after_s
 
 
-class _ReconnectTimer:
+class _RestartTimer:
     """Fire a warning then a deadline callback ahead of a provider's connection limit.
 
     The clock is injectable so tests can drive timing without wall time.
@@ -45,7 +45,7 @@ class _ReconnectTimer:
 
         Args:
             on_warning: Awaitable called with seconds-left when the warning lead elapses.
-            on_deadline: Awaitable called when the reconnect deadline elapses.
+            on_deadline: Awaitable called when the restart deadline elapses.
             sleep: Injectable async sleep (for tests). Defaults to ``asyncio.sleep``.
         """
         self._on_warning = on_warning
@@ -63,7 +63,7 @@ class _ReconnectTimer:
         self.cancel()
         self._task = asyncio.create_task(self._run(deadline_s, warning_lead_s))
         logger.debug(
-            "deadline_s=<%.1f>, warning_lead_s=<%.1f> | proactive reconnect timer armed",
+            "deadline_s=<%.1f>, warning_lead_s=<%.1f> | proactive restart timer armed",
             deadline_s,
             warning_lead_s,
         )
@@ -96,6 +96,6 @@ class _ReconnectTimer:
             await asyncio.gather(deadline_sleep, return_exceptions=True)
 
         # Detach before the callback re-arms this timer; cancelling a live self-reference
-        # would abort the reconnect the callback runs.
+        # would abort the restart the callback runs.
         self._task = None
         await self._on_deadline()
