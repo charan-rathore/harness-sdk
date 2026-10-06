@@ -306,6 +306,45 @@ class TestContextOffloader:
         assert (await storage.retrieve(refs[1]))[1] == "application/json"
 
     @pytest.mark.asyncio
+    async def test_result_that_fits_in_the_preview_is_not_offloaded(self, plugin, storage, mock_agent):
+        # preview budget is 10 tokens * 4 chars = 40 chars. The model's estimate says the result is over the
+        # 25 token threshold, but the whole text fits in the preview, so offloading would only add framing.
+        mock_agent.model.count_tokens = AsyncMock(return_value=30)
+        rows = [1, 2, 3]
+        assert len(json.dumps(rows, indent=2)) <= 40
+        for content in ([{"text": "a" * 40}], [{"json": rows}]):
+            event = _make_event(mock_agent, content)
+
+            await plugin._handle_tool_result(event)
+
+            assert event.result["content"] == content
+        assert len(storage._store) == 0
+
+    @pytest.mark.asyncio
+    async def test_result_just_over_the_preview_is_still_offloaded(self, plugin, storage, mock_agent):
+        mock_agent.model.count_tokens = AsyncMock(return_value=30)
+        event = _make_event(mock_agent, "a" * 41)
+
+        await plugin._handle_tool_result(event)
+
+        assert "[Offloaded:" in event.result["content"][0]["text"]
+        assert len(storage._store) == 1
+
+    @pytest.mark.asyncio
+    async def test_short_text_with_an_image_is_still_offloaded(self, plugin, storage, mock_agent):
+        mock_agent.model.count_tokens = AsyncMock(return_value=30)
+        content = [
+            {"text": "short"},
+            {"image": {"format": "png", "source": {"bytes": b"\x89PNG" + b"0" * 100}}},
+        ]
+        event = _make_event(mock_agent, content)
+
+        await plugin._handle_tool_result(event)
+
+        assert "[Offloaded:" in event.result["content"][0]["text"]
+        assert len(storage._store) == 2
+
+    @pytest.mark.asyncio
     async def test_small_json_passes_through(self, plugin, mock_agent):
         content = [{"json": {"key": "value"}}]
         event = _make_event(mock_agent, content)

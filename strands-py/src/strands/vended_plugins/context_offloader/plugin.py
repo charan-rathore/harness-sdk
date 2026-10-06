@@ -515,6 +515,18 @@ class ContextOffloader(Plugin):
 
         full_text = "\n".join(text_preview_parts) if text_preview_parts else ""
 
+        # The preview is cut by characters while the threshold check uses the model's token estimate,
+        # so a result can be over the threshold and still fit entirely inside the preview. Offloading it
+        # would only add the header, guidance and reference lines to the same text, so keep it in context.
+        text_or_json_only = all(block.get("text") or "json" in block for block in content)
+        if text_or_json_only and len(full_text) <= self._preview_tokens * _CHARS_PER_TOKEN:
+            logger.debug(
+                "tool_use_id=<%s>, tokens=<%d> | tool result fits in the preview, not offloaded",
+                tool_use_id,
+                token_count,
+            )
+            return
+
         # Store each content block individually
         storage = self._storage_for_agent(event.agent)
         cycle = event.agent.event_loop_metrics.cycle_count
