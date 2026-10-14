@@ -88,6 +88,13 @@ describe.skipIf(process.platform === 'win32')('FileStorage with sandbox', () => 
     await expect(storage.retrieve('./artifacts/../escape.txt')).rejects.toThrow('Reference not found')
   })
 
+  it('retrieves a stored key ending in a dot without allowing traversal', async () => {
+    const ref = await storage.store('Summary.', new TextEncoder().encode('saved'), 'text/plain')
+    expect(ref).toContain('..txt')
+    expect(new TextDecoder().decode((await storage.retrieve(ref)).content)).toBe('saved')
+    await expect(storage.retrieve('./artifacts/../escape.txt')).rejects.toThrow('Reference not found')
+  })
+
   it('produces unique references for repeated keys', async () => {
     const ref1 = await storage.store('key', new TextEncoder().encode('first'), 'text/plain')
     const ref2 = await storage.store('key', new TextEncoder().encode('second'), 'text/plain')

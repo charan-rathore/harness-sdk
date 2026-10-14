@@ -328,7 +328,8 @@ export class FileStorage implements Storage {
 
       const prefix = `${this._artifactDir.replace(/\/+$/, '')}/`
       const candidate = reference.startsWith(prefix) ? reference.slice(prefix.length) : reference
-      if (!candidate || candidate.includes('..') || /[/\\]/.test(candidate)) {
+      // Accept only a bare filename: no empty string, no "." / ".." segments, no path separators.
+      if (!candidate || candidate === '.' || candidate === '..' || /[/\\]/.test(candidate)) {
         throw new Error(`Reference not found: ${reference}`)
       }
       const filename = this._knownFilename(candidate)
@@ -348,6 +349,7 @@ export class FileStorage implements Storage {
     const resolvedDir = path.resolve(this._artifactDir)
     const candidatePath =
       reference === path.basename(reference) ? path.join(resolvedDir, reference) : path.resolve(reference)
+    // Same policy on disk: no ".." segments, and the reference must resolve inside the artifact dir.
     if (reference.split(/[/\\]/).includes('..') || path.dirname(candidatePath) !== resolvedDir) {
       throw new Error(`Reference not found: ${reference}`)
     }
