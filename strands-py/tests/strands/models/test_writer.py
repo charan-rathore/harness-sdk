@@ -10,8 +10,10 @@ from writerai.types.chat_completion_chunk import ChatCompletionChunk, Choice, Ch
 from writerai.types.shared.tool_call_streaming import Function, ToolCallStreaming
 
 import strands
+from strands.event_loop.streaming import process_stream
 from strands.models.model import CacheConfig
 from strands.models.writer import WriterModel
+from strands.types._events import ModelStopReason
 from strands.types.exceptions import ContextWindowOverflowException
 
 
@@ -758,19 +760,17 @@ async def test_stream_preserves_first_tool_argument_delta(writer_client, model, 
     )
     writer_client.chat.chat.return_value = mock_streaming_response(chunks)
     events = await alist(model.stream([{"role": "user", "content": [{"text": "calculate"}]}]))
-    inputs = [
+    tru_inputs = [
         event["contentBlockDelta"]["delta"]["toolUse"]["input"]
         for event in events
         if "contentBlockDelta" in event and "toolUse" in event["contentBlockDelta"]["delta"]
     ]
-    assert json.loads("".join(inputs)) == {"x": 1}
+    exp_input = {"x": 1}
+    assert json.loads("".join(tru_inputs)) == exp_input
 
 
 @pytest.mark.asyncio
 async def test_stream_aggregates_parallel_first_tool_arguments(writer_client, model):
-    from strands.event_loop.streaming import process_stream
-    from strands.types._events import ModelStopReason
-
     def chunk(calls, finish=None, usage=None):
         return ChatCompletionChunk.model_validate(
             {
@@ -803,10 +803,11 @@ async def test_stream_aggregates_parallel_first_tool_arguments(writer_client, mo
     events = [
         event async for event in process_stream(model.stream([{"role": "user", "content": [{"text": "calculate"}]}]))
     ]
-    stop = next(event for event in events if isinstance(event, ModelStopReason))
-    tools = [block["toolUse"] for block in stop["stop"][1]["content"] if "toolUse" in block]
-    assert [(tool["toolUseId"], tool["name"], tool["input"]) for tool in tools] == [
+    tru_stop = next(event for event in events if isinstance(event, ModelStopReason))
+    tru_tools = [block["toolUse"] for block in tru_stop["stop"][1]["content"] if "toolUse" in block]
+    exp_tools = [
         ("call0", "tool0", {"x": 1}),
         ("call1", "tool1", {"y": 2}),
     ]
-    assert stop["stop"][0] == "tool_use"
+    assert [(tool["toolUseId"], tool["name"], tool["input"]) for tool in tru_tools] == exp_tools
+    assert tru_stop["stop"][0] == "tool_use"
