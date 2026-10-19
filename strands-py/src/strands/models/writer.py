@@ -347,6 +347,10 @@ class WriterModel(Model):
                 if event["data_type"] == "text":
                     return {"contentBlockDelta": {"delta": {"text": event["data"]}}}
 
+                # Writer stream deltas are built without validation, so a first
+                # delta can carry arguments=None; emit "" the way the other
+                # OpenAI-compatible providers (openai.py) and the writer-sdk
+                # accumulator itself do.
                 return {"contentBlockDelta": {"delta": {"toolUse": {"input": event["data"].function.arguments or ""}}}}
 
             case "content_block_stop":
