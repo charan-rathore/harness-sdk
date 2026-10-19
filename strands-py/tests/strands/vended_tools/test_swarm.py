@@ -296,3 +296,28 @@ class TestChildren:
         assert cls.call_args[1].get("entry_point") is (children[1] if entry_point else None)
         for child in children:
             assert list(child.tool_registry.registry) == ["keep"]
+
+    @pytest.mark.asyncio
+    async def test_children_lose_dynamic_swarm_tools(self):
+        """A swarm tool also registered as a dynamic tool must not be re-exposed to children."""
+        children = []
+
+        def builder(spec):
+            child = Mock(name=spec.name)
+            child.state = AgentState()
+            child.tool_registry = ToolRegistry()
+            nested = make_swarm()
+            child.tool_registry.registry["swarm"] = nested
+            child.tool_registry.dynamic_tools["swarm"] = nested
+            child.tool_registry.registry["handoff_to_agent"] = Mock()
+            child.tool_registry.dynamic_tools["handoff_to_agent"] = Mock()
+            children.append(child)
+            return child
+
+        custom = make_swarm(name="team", builder=builder)
+        with _patch():
+            await _run(custom, task="t", agents=[_spec("a")], tool_context=_ctx())
+
+        for child in children:
+            assert "swarm" not in child.tool_registry.dynamic_tools
+            assert "handoff_to_agent" not in child.tool_registry.dynamic_tools
