@@ -347,7 +347,7 @@ class WriterModel(Model):
                 if event["data_type"] == "text":
                     return {"contentBlockDelta": {"delta": {"text": event["data"]}}}
 
-                return {"contentBlockDelta": {"delta": {"toolUse": {"input": event["data"].function.arguments}}}}
+                return {"contentBlockDelta": {"delta": {"toolUse": {"input": event["data"].function.arguments or ""}}}}
 
             case "content_block_stop":
                 return {"contentBlockStop": {}}

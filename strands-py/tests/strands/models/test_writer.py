@@ -6,7 +6,8 @@ from typing import Any
 import pydantic
 import pytest
 import writerai
-from writerai.types.chat_completion_chunk import ChatCompletionChunk
+from writerai.types.chat_completion_chunk import ChatCompletionChunk, Choice, ChoiceDelta
+from writerai.types.shared.tool_call_streaming import Function, ToolCallStreaming
 
 import strands
 from strands.models.model import CacheConfig
@@ -688,7 +689,7 @@ def test_cache_config_unsupported_field_warns_and_is_not_routed(writer_client, m
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("arguments", [['{"x":1}'], ['{"x":', "1}"], ["", '{"x":1}']])
+@pytest.mark.parametrize("arguments", [['{"x":1}'], ['{"x":', "1}"], ["", '{"x":1}'], [None, '{"x":1}']])
 async def test_stream_preserves_first_tool_argument_delta(writer_client, model, arguments, alist):
     chunks = []
     for argument in arguments:
@@ -698,17 +699,40 @@ async def test_stream_preserves_first_tool_argument_delta(writer_client, model, 
             "type": "function",
             "function": {"name": "calculator", "arguments": argument},
         }
-        chunks.append(
-            ChatCompletionChunk.model_validate(
-                {
-                    "id": "1",
-                    "object": "chat.completion.chunk",
-                    "created": 1,
-                    "model": "palmyra-x5",
-                    "choices": [{"index": 0, "delta": {"tool_calls": [call]}, "finish_reason": None}],
-                }
+        if argument is None:
+            tool_call = ToolCallStreaming.model_construct(
+                index=call["index"],
+                id=call["id"],
+                type=call["type"],
+                function=Function.model_construct(name=call["function"]["name"], arguments=None),
             )
-        )
+            chunks.append(
+                ChatCompletionChunk.model_construct(
+                    id="1",
+                    object="chat.completion.chunk",
+                    created=1,
+                    model="palmyra-x5",
+                    choices=[
+                        Choice.model_construct(
+                            index=0,
+                            delta=ChoiceDelta.model_construct(tool_calls=[tool_call]),
+                            finish_reason=None,
+                        )
+                    ],
+                )
+            )
+        else:
+            chunks.append(
+                ChatCompletionChunk.model_validate(
+                    {
+                        "id": "1",
+                        "object": "chat.completion.chunk",
+                        "created": 1,
+                        "model": "palmyra-x5",
+                        "choices": [{"index": 0, "delta": {"tool_calls": [call]}, "finish_reason": None}],
+                    }
+                )
+            )
     chunks.extend(
         [
             ChatCompletionChunk.model_validate(
