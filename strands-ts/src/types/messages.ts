@@ -273,6 +273,13 @@ export interface ToolUseBlockData {
    * Must be preserved and sent back to the model for multi-turn tool use.
    */
   reasoningSignature?: string
+
+  /**
+   * Raw tool input that failed JSON parsing while streaming.
+   * When set, the tool must not be executed; the agent returns an error
+   * tool result carrying this text so the model can fix its JSON and retry.
+   */
+  inputParseError?: string
 }
 
 /**
@@ -306,12 +313,17 @@ export class ToolUseBlock implements ToolUseBlockData, JSONSerializable<{ toolUs
    */
   readonly reasoningSignature?: string
 
+  readonly inputParseError?: string
+
   constructor(data: ToolUseBlockData) {
     this.name = data.name
     this.toolUseId = data.toolUseId
     this.input = data.input
     if (data.reasoningSignature !== undefined) {
       this.reasoningSignature = data.reasoningSignature
+    }
+    if (data.inputParseError !== undefined) {
+      this.inputParseError = data.inputParseError
     }
   }
 
@@ -326,6 +338,7 @@ export class ToolUseBlock implements ToolUseBlockData, JSONSerializable<{ toolUs
         toolUseId: this.toolUseId,
         input: this.input,
         reasoningSignature: this.reasoningSignature,
+        inputParseError: this.inputParseError,
       }),
     }
   }

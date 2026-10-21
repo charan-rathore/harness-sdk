@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest'
+import { describe, it, expect, vi } from 'vitest'
 import {
   Message,
   TextBlock,
@@ -10,6 +10,7 @@ import {
 import { CitationsBlock } from '../../types/citations.js'
 import { TestModelProvider, collectGenerator } from '../../__fixtures__/model-test-helpers.js'
 import { MaxTokensError, ModelError } from '../../errors.js'
+import { logger } from '../../logging/logger.js'
 import { Model } from '../model.js'
 import type { BaseModelConfig, StreamOptions } from '../model.js'
 import type { ModelStreamEvent } from '../streaming.js'
@@ -350,7 +351,10 @@ describe('Model', () => {
         )
       })
 
-      it('surfaces SyntaxError as cause when tool input JSON is malformed and stopReason is not maxTokens', async () => {
+      it('flags the tool use block with the parse error instead of throwing', async () => {
+        // The tool is skipped downstream and the model gets an error tool
+        // result, so it can fix its JSON and retry (#2051).
+        const warnSpy = vi.spyOn(logger, 'warn')
         const provider = new TestModelProvider(async function* () {
           yield { type: 'modelMessageStartEvent', role: 'assistant' }
           yield {
@@ -367,15 +371,16 @@ describe('Model', () => {
 
         const messages = [new Message({ role: 'user', content: [new TextBlock('Hi')] })]
 
-        try {
-          await collectGenerator(provider.streamAggregated(messages))
-          expect.fail('Expected error to be thrown')
-        } catch (error) {
-          expect(error).toBeInstanceOf(ModelError)
-          expect(error).not.toBeInstanceOf(MaxTokensError)
-          expect((error as ModelError).message).toBe('unable to parse tool input JSON')
-          expect((error as ModelError).cause).toBeInstanceOf(SyntaxError)
-        }
+        const { result } = await collectGenerator(provider.streamAggregated(messages))
+
+        expect(result.stopReason).toBe('toolUse')
+        const toolBlock = result.message.content.find((block) => block instanceof ToolUseBlock)
+        expect(toolBlock).toBeInstanceOf(ToolUseBlock)
+        expect((toolBlock as ToolUseBlock).input).toEqual({})
+        expect((toolBlock as ToolUseBlock).inputParseError).toBe('{invalid json')
+        expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('failed to parse tool input JSON'))
+        expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('{invalid json'))
+        warnSpy.mockRestore()
       })
 
       it('attaches SyntaxError as cause when stream ends without a stop event after malformed tool input', async () => {
@@ -401,7 +406,7 @@ describe('Model', () => {
           expect(error).toBeInstanceOf(ModelError)
           expect(error).not.toBeInstanceOf(MaxTokensError)
           expect((error as ModelError).message).toBe('Stream ended without completing a message')
-          expect((error as ModelError).cause).toBeInstanceOf(SyntaxError)
+          expect((error as ModelError).cause).toBeUndefined()
         }
       })
     })

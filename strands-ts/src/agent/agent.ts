@@ -2630,27 +2630,45 @@ export class Agent implements LocalAgent, InvokableAgent {
           yield new ToolResultEvent({ agent: this, invocationContext, result, invocationState })
         }
       } else {
-        yield* this._toolExecutor.execute(
-          {
-            agent: this,
-            middlewareRegistry: this._middlewareRegistry,
-            tracer: this._tracer,
-            meter: this._meter,
-            cancelSignal: this._abortSignal,
-            invocationContext,
-            ...(this._backgroundTasks && {
-              backgroundTasks: this._backgroundTasks,
-              backgroundTaskPassId: assistantMessage.trackingId,
-            }),
-          },
-          {
-            toolUseBlocks,
-            toolResultBlocks,
-            invocationState,
-            assistantMessage,
-            ...(completedToolResults && { completedToolResults }),
+        // Tool uses whose streamed input was malformed JSON are never executed:
+        // they get an error tool result carrying the parse error so the model
+        // can fix its JSON and retry (#2051).
+        const runnableBlocks = toolUseBlocks.filter((block) => block.inputParseError === undefined)
+        for (const block of toolUseBlocks) {
+          if (block.inputParseError === undefined) {
+            continue
           }
-        )
+          const result = new ToolResultBlock({
+            toolUseId: block.toolUseId,
+            status: 'error',
+            content: [new TextBlock(`Invalid JSON in tool input: ${block.inputParseError}. Fix the JSON and retry.`)],
+          })
+          toolResultBlocks.push(result)
+          yield new ToolResultEvent({ agent: this, invocationContext, result, invocationState })
+        }
+        if (runnableBlocks.length > 0) {
+          yield* this._toolExecutor.execute(
+            {
+              agent: this,
+              middlewareRegistry: this._middlewareRegistry,
+              tracer: this._tracer,
+              meter: this._meter,
+              cancelSignal: this._abortSignal,
+              invocationContext,
+              ...(this._backgroundTasks && {
+                backgroundTasks: this._backgroundTasks,
+                backgroundTaskPassId: assistantMessage.trackingId,
+              }),
+            },
+            {
+              toolUseBlocks: runnableBlocks,
+              toolResultBlocks,
+              invocationState,
+              assistantMessage,
+              ...(completedToolResults && { completedToolResults }),
+            }
+          )
+        }
       }
     } finally {
       toolResultMessage = new Message({ role: 'user', content: toolResultBlocks })
